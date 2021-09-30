@@ -39,43 +39,19 @@ aging <- function(dat, at) {
 # Updated Departure Module -----------------------------------------------------
 
 dfunc <- function(dat, at) {
-
+  # browser()
   ## Attributes
-  alive <- get_attr(dat, "alive")
   active <- get_attr(dat, "active")
+  active_s <- get_attr(dat, "active_s")
   exitTime <- get_attr(dat, "exitTime")
   age <- get_attr(dat, "age")
   status <- get_attr(dat, "status")
 
   ## Parameters
   death.rates <- get_param(dat, "death.rates")
-
-  # ADAPTED CODE
-  ########################
-  idsDepAll <- unique(c(idsDep, idsDepAIDS))
+  end.horizon <- get_param(dat, "end.horizon")
   
-  ## 65+ who did not die this time-step
-  ids65 <- setdiff(which(age >= 65), idsDepAll)
-  dat$attr$active[ids65] <- 0
-  
-  
-  depHIV <- intersect(idsDepAll, which(status == 1))
-  depHIV.old <- intersect(depHIV, which(age >= 65))
-  
-  if (length(idsDepAll) > 0) {
-    dat$attr$active[idsDepAll] <- 0
-    dat$attr$alive[idsDepAll] <- 0
-    for (i in 1:3) {
-      dat$el[[i]] <- tergmLite::delete_vertices(dat$el[[i]], idsDepAll)
-    }
-    dat$attr <- deleteAttr(dat$attr, idsDepAll)
-    if (unique(sapply(dat$attr, length)) != attributes(dat$el[[1]])$n) {
-      stop("mismatch between el and attr length in departures mod")
-    }
-  }
-  ########################
-  
-  ## Query alive
+  ## Query active
   idsElig <- which(active == 1)
   nElig <- length(idsElig)
   nDepts <- 0
@@ -83,34 +59,38 @@ dfunc <- function(dat, at) {
   if (nElig > 0) {
 
     ## Calculate age-specific departure rates for each eligible node
-    ## Everyone older than 85 gets the final mortality
-    whole_ages_of_elig <- pmin(ceiling(age[idsElig]), 86)
-    departure_rates_of_elig <- dep.rates[whole_ages_of_elig]
+    whole_ages_of_elig <- ceiling(age[idsElig])
+    death_rates_of_elig <- death.rates[whole_ages_of_elig]
 
     ## Simulate departure process
-    vecDepts <- which(rbinom(nElig, 1, departure_rates_of_elig) == 1)
-    idsDepts <- idsElig[vecDepts]
-    nDepts <- length(idsDepts)
+    vecDeaths <- which(rbinom(nElig, 1, 1 - exp(-death_rates_of_elig)) == 1)
+    idsDeaths <- idsElig[vecDeaths]
+    nDeaths <- length(idsDeaths)
 
     ## Update nodal attributes
-    if (nDepts > 0) {
-      active[idsDepts] <- 0
-      exitTime[idsDepts] <- at
+    if (nDeaths > 0) {
+      active_s[idsDeaths] <- 0
+      active[idsDeaths] <- 0
+      exitTime[idsDeaths] <- at
     }
+    
+    ## 65+ who did not die this time-step
+    idsRetire <- setdiff(which(age >= 65), idsDeaths)
+    active_s[idsRetire] <- 0
+    
+  }
+  
+  if (at == end.horizon) {
+    active_s <- rep(0, length(active_s))
   }
 
   ## Reset attr
+  dat <- set_attr(dat, "active_s", active_s)
   dat <- set_attr(dat, "active", active)
   dat <- set_attr(dat, "exitTime", exitTime)
 
   ## Summary statistics
   dat <- set_epi(dat, "d.flow", at, nDepts)
-  
-  ####################################
-  if (at == dat$param$end.horizon) {
-    dat$attr$active <- rep(0, length(dat$attr$active))
-  }
-  ####################################
   
   return(dat)
 }
@@ -121,7 +101,7 @@ dfunc <- function(dat, at) {
 afunc <- function(dat, at) {
 
   ## Parameters
-  n <- sum(get_attr(dat, "active") == 1)
+  n <- sum(get_attr(dat, "active_s") == 1)
   a.rate <- get_param(dat, "arrival.rate")
 
   ## Process
@@ -134,7 +114,7 @@ afunc <- function(dat, at) {
     dat <- append_attr(dat, "status", "s", nArrivals)
     dat <- append_attr(dat, "infTime", NA, nArrivals)
     dat <- append_attr(dat, "age", 0, nArrivals)
-    dat <- append_attr(dat, "alive", 1, nArrivals)
+    dat <- append_attr(dat, "active_s", 1, nArrivals)
   }
 
   ## Summary statistics

@@ -16,35 +16,37 @@ eval(parse(text = print(commandArgs(TRUE)[1])))
 
 nsims <- 1
 ncores <- 1
-nsteps <- 6000
+nsteps <- 7500
 
 
 # Vital Dynamics Setup ----------------------------------------------------
 
 ages <- 0:100
 
-# death rate per person, per week
-dr <- 0.01 / 52
-death_rate_pp_pw <- c(dr / 52, Inf)
+dr <- 0.02 / 52
+death_rate_pp_pw <- c(dr / 52, 20*dr / 52, 100*dr / 52)
 
 # Build out a mortality rate vector
-age_spans <- c(100, 1)
+age_spans <- c(85, 15, 1)
 dr_vec <- rep(death_rate_pp_pw, times = age_spans)
 data.frame(ages, dr_vec)
-
 
 # Network Model Estimation ------------------------------------------------
 
 # Initialize the network
-n_active_s <- 500
-n_inactive_s <- 100
-n <- n_active_s + n_inactive_s
+n <- 500
+ages <- 16:85
+ageVec <- sample(ages, n, replace = TRUE)
+activeVec <- ifelse(ageVec <= 65, 1, 0)
+
+n_active_s <- length(which(ageVec <= 65))
+n_inactive_s <- length(which(ageVec > 65))
+
 nw <- network_initialize(n)
 
 # Set up ages
-ageVec <- sample(ages, n, replace = TRUE)
 nw <- set_vertex_attribute(nw, "age", ageVec)
-nw <- set_vertex_attribute(nw, "active_s", c(rep(1, n_active_s), rep(0, n_inactive_s)))
+nw <- set_vertex_attribute(nw, "active_s", activeVec)
 
 # Define the formation model: edges
 formation <- ~edges + absdiff("age") + nodefactor("active_s", levels = 1)
@@ -59,15 +61,16 @@ inactive_s.edges <- 0
 target.stats <- c(edges, absdiff, inactive_s.edges)
 
 # Parameterize the dissolution model
-coef.diss <- dissolution_coefs(~offset(edges), 60, dr)
+coef.diss <- dissolution_coefs(~offset(edges), 60, mean(dr_vec))
 coef.diss
+
 
 # Fit the model
 est <- netest(nw, formation, target.stats, coef.diss)
 
-# Model diagnostics
+# # Model diagnostics
 # dx <- netdx(est, nsims = nsims, ncores = ncores, nsteps = nsteps,
-#             nwstats.formula = ~edges + absdiff("age") + isolates + degree(0:5) 
+#             nwstats.formula = ~edges + absdiff("age") + isolates + degree(0:5)
 #             + nodefactor("active_s", levels = 1))
 # print(dx)
 # plot(dx)
@@ -78,8 +81,9 @@ est <- netest(nw, formation, target.stats, coef.diss)
 # Epidemic model parameters
 param <- param.net(inf.prob = 0.15,
                    death.rates = dr_vec,
-                   end.horizon = 100,
-                   arrival.rate = dr)
+                   end.horizon = 1041,
+                   # end.horizon = 10,
+                   arrival.rate = mean(dr_vec))
 
 # Initial conditions
 init <- init.net(i.num = 50)
@@ -100,9 +104,9 @@ control <- control.net(type = NULL,
                        aging.FUN = aging,
                        departures.FUN = dfunc,
                        arrivals.FUN = afunc,
-                       infection.FUN = infection.net,
-                       # resim_nets.FUN = resim_nets,
-                       # resimulate.network = TRUE,
+                       infection.FUN = ifunc,
+                       resim_nets.FUN = resimfunc,
+                       resimulate.network = TRUE,
                        verbose = TRUE)
 
 # Run the network model simulation with netsim
@@ -116,12 +120,13 @@ plot(sim, main = "State Sizes", sim.lines = TRUE,
      qnts = FALSE, mean.smooth = FALSE)
 
 par(mfrow = c(1, 2))
-plot(sim, y = "num", main = "Population Size", qnts = 1, ylim = c(450, 550))
-plot(sim, y = "meanAge", main = "Mean Age", qnts = 1, ylim = c(35, 50))
+plot(sim, y = "num", main = "Population Size", qnts = 1, ylim = c(0, 550))
+plot(sim, y = "meanAge", main = "Mean Age", qnts = 1, ylim = c(0, 150))
 
-par(mfrow = c(1, 2))
+par(mfrow = c(1, 3))
 plot(sim, y = "d.flow", mean.smooth = TRUE, qnts = 1, main = "Departures")
 plot(sim, y = "a.flow", mean.smooth = TRUE, qnts = 1, main = "Arrivals")
+plot(sim, y = "si.flow", mean.smooth = TRUE, qnts = 1, main = "Infections")
 
 # Examine the data
 df <- as.data.frame(sim, out = "mean")

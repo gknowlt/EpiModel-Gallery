@@ -94,12 +94,9 @@ param <- param.net(inf.prob = 0.15,
 # Initial conditions
 init <- init.net(i.num = 50)
 
-# Read in the module functions
-if (interactive()) {
+
   source("2018-08-SIwithVitalDynamics/module-fx.R", echo = TRUE)
-} else {
-  source("module-fx.R")
-}
+
 
 # Control settings
 control <- control.net(type = NULL,
@@ -112,7 +109,7 @@ control <- control.net(type = NULL,
                        infection.FUN = infection.net,
                        resim_nets.FUN = resim_nets,
                        resimulate.network = TRUE,
-                       verbose = FALSE)
+                       verbose = TRUE)
 
 # Run the network model simulation with netsim
 sim <- netsim(est, param, init, control)

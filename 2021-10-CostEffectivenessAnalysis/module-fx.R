@@ -25,12 +25,14 @@ ce <- function(dat, at) {
 aging <- function(dat, at) {
 
   # Update age on attr and also the network
+  active <- get_attr(dat, "active")
+  idsActive <- which(active == 1)
   age <- get_attr(dat, "age")
-  age <- age + 1/52
+  age[idsActive] <- age[idsActive] + 1/52
   dat <- set_attr(dat, "age", age)
 
   ## Summary statistics ##
-  dat <- set_epi(dat, "meanAge", at, mean(age, na.rm = TRUE))
+  dat <- set_epi(dat, "meanAge", at, mean(age[idsActive], na.rm = TRUE))
 
   return(dat)
 }
@@ -39,7 +41,10 @@ aging <- function(dat, at) {
 # Updated Departure Module -----------------------------------------------------
 
 dfunc <- function(dat, at) {
-  # browser()
+  
+  if (at == 100) {
+    browser()
+  }
   ## Attributes
   active <- get_attr(dat, "active")
   active_s <- get_attr(dat, "active_s")
@@ -54,14 +59,15 @@ dfunc <- function(dat, at) {
   ## Query active
   idsElig <- which(active == 1)
   nElig <- length(idsElig)
-  nDepts <- 0
+  nDeaths <- 0
 
   if (nElig > 0) {
 
     ## Calculate age-specific departure rates for each eligible node
-    whole_ages_of_elig <- ceiling(age[idsElig])
+    ## Everyone older than 85 gets the final mortality
+    whole_ages_of_elig <- pmin(ceiling(age[idsElig]), 101)
     death_rates_of_elig <- death.rates[whole_ages_of_elig]
-
+    
     ## Simulate departure process
     vecDeaths <- which(rbinom(nElig, 1, 1 - exp(-death_rates_of_elig)) == 1)
     idsDeaths <- idsElig[vecDeaths]
@@ -75,14 +81,14 @@ dfunc <- function(dat, at) {
     }
     
     ## 65+ who did not die this time-step
-    idsRetire <- setdiff(which(age >= 65), idsDeaths)
+    idsRetire <- setdiff(which(age >= 65 & active_s == 1), idsDeaths)
     active_s[idsRetire] <- 0
     
   }
   
-  if (at == end.horizon) {
-    active_s <- rep(0, length(active_s))
-  }
+  # if (at == end.horizon) {
+  #   active_s <- rep(0, length(active_s))
+  # }
 
   ## Reset attr
   dat <- set_attr(dat, "active_s", active_s)
@@ -90,7 +96,7 @@ dfunc <- function(dat, at) {
   dat <- set_attr(dat, "exitTime", exitTime)
 
   ## Summary statistics
-  dat <- set_epi(dat, "d.flow", at, nDepts)
+  dat <- set_epi(dat, "d.flow", at, nDeaths)
   
   return(dat)
 }
@@ -99,9 +105,15 @@ dfunc <- function(dat, at) {
 # Updated Arrivals Module ----------------------------------------------------
 
 afunc <- function(dat, at) {
+  
+  end.horizon <- get_param(dat, "end.horizon")
+  
+  if (at >= end.horizon) {
+    return(dat)
+  }
 
   ## Parameters
-  n <- sum(get_attr(dat, "active_s") == 1)
+  n <- sum(get_attr(dat, "active") == 1)
   a.rate <- get_param(dat, "arrival.rate")
 
   ## Process
@@ -113,7 +125,7 @@ afunc <- function(dat, at) {
     dat <- append_core_attr(dat, at, nArrivals)
     dat <- append_attr(dat, "status", "s", nArrivals)
     dat <- append_attr(dat, "infTime", NA, nArrivals)
-    dat <- append_attr(dat, "age", 0, nArrivals)
+    dat <- append_attr(dat, "age", 16, nArrivals)
     dat <- append_attr(dat, "active_s", 1, nArrivals)
   }
 
@@ -123,72 +135,156 @@ afunc <- function(dat, at) {
   return(dat)
 }
 
-simnet_msm <- function(dat, at) {
-  # NEW CODE
-  ##########
-  if (at > dat$param$end.horizon) {
+ifunc <- function (dat, at) {
+  # browser()
+  
+  end.horizon <- get_param(dat, "end.horizon")
+  
+  # 
+  if (at >= end.horizon) {
     return(dat)
   }
   
-  inactive_ids <- which(dat$attr$active == 0)
-  for (i in 1:3) {
-    rm <- union(which(dat$el[[i]][, 1] %in% inactive_ids), which(dat$el[[i]][, 2] %in% inactive_ids))
-    if (length(rm > 0)) {
-      dat$el[[i]] <- as.edgelist(x = dat$el[[i]][-rm, ], n = length(dat$attr$age))
+  #
+  active_s <- get_attr(dat, "active_s")
+  #
+  idsActive_s <- which(active_s == 1)
+  
+  active <- get_attr(dat, "active")
+  status <- get_attr(dat, "status")
+  infTime <- get_attr(dat, "infTime")
+  inf.prob <- get_param(dat, "inf.prob")
+  act.rate <- get_param(dat, "act.rate")
+  inter.eff <- get_param(dat, "inter.eff", override.null.error = TRUE)
+  inter.start <- get_param(dat, "inter.start", override.null.error = TRUE)
+  idsInf <- which(active == 1 & status == "i")
+  nActive <- sum(active == 1)
+  nElig <- length(idsInf)
+  nInf <- 0
+  if (nElig > 0 && nElig < nActive) {
+    del <- discord_edgelist(dat, at, network = 1)
+    if (!(is.null(del))) {
+      #
+      del <- del[which(del$sus %in% idsActive_s & del$inf %in% idsActive_s),]
+      del$infDur <- at - infTime[del$inf]
+      del$infDur[del$infDur == 0] <- 1
+      linf.prob <- length(inf.prob)
+      del$transProb <- ifelse(del$infDur <= linf.prob, 
+                              inf.prob[del$infDur], inf.prob[linf.prob])
+      if (!is.null(inter.eff) && at >= inter.start) {
+        del$transProb <- del$transProb * (1 - inter.eff)
+      }
+      lact.rate <- length(act.rate)
+      del$actRate <- ifelse(del$infDur <= lact.rate, act.rate[del$infDur], 
+                            act.rate[lact.rate])
+      del$finalProb <- 1 - (1 - del$transProb)^del$actRate
+      transmit <- rbinom(nrow(del), 1, del$finalProb)
+      del <- del[which(transmit == 1), ]
+      idsNewInf <- unique(del$sus)
+      status <- get_attr(dat, "status")
+      status[idsNewInf] <- "i"
+      dat <- set_attr(dat, "status", status)
+      infTime[idsNewInf] <- at
+      dat <- set_attr(dat, "infTime", infTime)
+      nInf <- length(idsNewInf)
     }
   }
+  if (nInf > 0) {
+    dat <- set_transmat(dat, del, at)
+  }
+  dat <- set_epi(dat, "si.flow", at, nInf)
+  return(dat)
+}
+
+resimfunc <- function (dat, at) {
   
-  # ## Edges correction
-  # dat <- edges_correct_msm(dat, at)
-  # 
-  # ## Main network
-  # nwparam.m <- EpiModel::get_nwparam(dat, network = 1)
-  # 
-  # dat$attr$deg.casl <- get_degree(dat$el[[2]])
-  # dat <- tergmLite::updateModelTermInputs(dat, network = 1)
-  # 
-  # dat$el[[1]] <- tergmLite::simulate_network(p = dat$p[[1]],
-  #                                            el = dat$el[[1]],
-  #                                            coef.form = nwparam.m$coef.form,
-  #                                            coef.diss = nwparam.m$coef.diss$coef.adj,
-  #                                            save.changes = TRUE)
-  # 
-  # plist1 <- update_plist(dat, at, ptype = 1)
-  # 
-  # 
-  # ## Casual network
-  # nwparam.p <- EpiModel::get_nwparam(dat, network = 2)
-  # 
-  # dat$attr$deg.main <- get_degree(dat$el[[1]])
-  # dat <- tergmLite::updateModelTermInputs(dat, network = 2)
-  # 
-  # dat$el[[2]] <- tergmLite::simulate_network(p = dat$p[[2]],
-  #                                            el = dat$el[[2]],
-  #                                            coef.form = nwparam.p$coef.form,
-  #                                            coef.diss = nwparam.p$coef.diss$coef.adj,
-  #                                            save.changes = TRUE)
-  # 
-  # plist2 <- update_plist(dat, at, ptype = 2)
-  # 
-  # dat$temp$plist <- rbind(plist1, plist2)
-  # if (dat$control$truncate.plist == TRUE) {
-  #   to.keep <- which(is.na(dat$temp$plist[, "stop"]))
-  #   dat$temp$plist <- dat$temp$plist[to.keep, ]
-  # }
-  # 
-  # ## One-off network
-  # nwparam.i <- EpiModel::get_nwparam(dat, network = 3)
-  # 
-  # dat$attr$deg.tot <- pmin(dat$attr$deg.main + get_degree(dat$el[[2]]), 3)
-  # dat <- tergmLite::updateModelTermInputs(dat, network = 3)
-  # 
-  # dat$el[[3]] <- tergmLite::simulate_ergm(p = dat$p[[3]],
-  #                                         el = dat$el[[3]],
-  #                                         coef = nwparam.i$coef.form)
-  # 
-  # if (dat$control$save.nwstats == TRUE) {
-  #   dat <- calc_nwstats(dat, at)
-  # }
+  #
+  end.horizon <- get_param(dat, "end.horizon")
+  if (at >= end.horizon) {
+    return(dat)
+  }
   
+  tergmLite <- get_control(dat, "tergmLite")
+  isTERGM <- get_control(dat, "isTERGM")
+  save.nwstats <- get_control(dat, "save.nwstats")
+  resimulate.network <- get_control(dat, "resimulate.network")
+  nwstats.formula <- get_control(dat, "nwstats.formula")
+  set.control.stergm <- get_control(dat, "set.control.stergm")
+  tergmLite.track.duration <- get_control(dat, "tergmLite.track.duration")
+  dat <- edges_correct(dat, at)
+  active <- get_attr(dat, "active")
+  idsActive <- which(active == 1)
+  anyActive <- ifelse(length(idsActive) > 0, TRUE, FALSE)
+  if (dat$param$groups == 2) {
+    group <- get_attr(dat, "group")
+    groupids.1 <- which(group == 1)
+    groupids.2 <- which(group == 2)
+    nActiveG1 <- length(intersect(groupids.1, idsActive))
+    nActiveG2 <- length(intersect(groupids.2, idsActive))
+    anyActive <- ifelse(nActiveG1 > 0 & nActiveG2 > 0, TRUE, 
+                        FALSE)
+  }
+  nwparam <- get_nwparam(dat)
+  if (anyActive == TRUE & resimulate.network == TRUE) {
+    if (tergmLite == FALSE) {
+      if (isTERGM == TRUE) {
+        suppressWarnings(dat$nw[[1]] <- simulate(dat$nw[[1]], 
+                                                 formation = nwparam$formation, dissolution = nwparam$coef.diss$dissolution, 
+                                                 coef.form = nwparam$coef.form, coef.diss = nwparam$coef.diss$coef.adj, 
+                                                 constraints = nwparam$constraints, time.start = at, 
+                                                 time.slices = 1, time.offset = 0, monitor = nwstats.formula, 
+                                                 control = set.control.stergm))
+      }
+      else {
+        dat$nw[[1]] <- simulate(object = nwparam$formation, 
+                                basis = dat$nw[[1]], coef = nwparam$coef.form, 
+                                constraints = nwparam$constraints, dynamic = FALSE, 
+                                monitor = nwstats.formula, nsim = 1)
+      }
+      if (save.nwstats == TRUE) {
+        new.nwstats <- tail(attributes(dat$nw[[1]])$stats, 
+                            1)
+        keep.cols <- which(!duplicated(colnames(new.nwstats)))
+        new.nwstats <- new.nwstats[, keep.cols, drop = FALSE]
+        dat$stats$nwstats[[1]] <- rbind(dat$stats$nwstats[[1]], 
+                                        new.nwstats)
+      }
+    }
+    if (tergmLite == TRUE) {
+      dat <- tergmLite::updateModelTermInputs(dat)
+      if (isTERGM == TRUE) {
+        rv <- tergmLite::simulate_network(state = dat$p[[1]]$state, 
+                                          coef = c(nwparam$coef.form, nwparam$coef.diss$coef.adj), 
+                                          control = dat$control$mcmc.control[[1]], save.changes = TRUE)
+        dat$el[[1]] <- rv$el
+        if (tergmLite.track.duration == TRUE) {
+          dat$p[[1]]$state$nw0 %n% "time" <- rv$state$nw0 %n% 
+            "time"
+          dat$p[[1]]$state$nw0 %n% "lasttoggle" <- rv$state$nw0 %n% 
+            "lasttoggle"
+        }
+      }
+      else {
+        rv <- tergmLite::simulate_ergm(state = dat$p[[1]]$state, 
+                                       coef = nwparam$coef.form, control = dat$control$mcmc.control[[1]])
+        dat$el[[1]] <- rv$el
+      }
+      if (save.nwstats == TRUE) {
+        nwL <- tergmLite::networkLite(dat$el[[1]], dat$attr)
+        if (tergmLite.track.duration == TRUE) {
+          nwL %n% "time" <- dat$p[[1]]$state$nw0 %n% 
+            "time"
+          nwL %n% "lasttoggle" <- dat$p[[1]]$state$nw0 %n% 
+            "lasttoggle"
+        }
+        nwstats <- summary(dat$control$nwstats.formulas[[1]], 
+                           basis = nwL, term.options = dat$control$mcmc.control[[1]]$term.options, 
+                           dynamic = isTERGM)
+        keep.cols <- which(!duplicated(names(nwstats)))
+        dat$stats$nwstats[[1]] <- rbind(dat$stats$nwstats[[1]], 
+                                        nwstats[keep.cols])
+      }
+    }
+  }
   return(dat)
 }

@@ -19,7 +19,7 @@ if (interactive()) {
   ncores <- 5
   nsteps <- 256
 } else {
-  nsims <- 1
+  nsims <- 10
   ncores <- 1
   nsteps <- 104
 }
@@ -41,32 +41,41 @@ data.frame(ages, dr_vec)
 
 # Initialize the network
 n <- 500
-init_ages <- 16:85
-ageVec <- sample(init_ages, n, replace = TRUE)
+init.ages <- 16:85
+ageVec <- sample(init.ages, n, replace = TRUE)
 
 # Throughout simulation, individuals over age 65 are sexually inactive
-activeVec <- ifelse(ageVec <= 65, 1, 0)
+active.sVec <- ifelse(ageVec <= 65, 1, 0)
 
-n_active_s <- length(which(ageVec <= 65))
-n_inactive_s <- length(which(ageVec > 65))
+# Initial population used to fit network must contain 
+# a mixture of sexually active and inactive individuals
+# Here we assume age 65+ is inactive.
+n.active.s <- length(which(ageVec <= 65))
+n.inactive.s <- length(which(ageVec > 65))
 
+# Initialize network
 nw <- network_initialize(n)
 
 # Set up ages
 nw <- set_vertex_attribute(nw, "age", ageVec)
-nw <- set_vertex_attribute(nw, "active_s", activeVec)
+
+# active.s denotes which individuals are sexually active across modules 
+nw <- set_vertex_attribute(nw, "active.s", active.sVec)
 
 # Define the formation model: edges
-formation <- ~edges + absdiff("age") + nodefactor("active_s", levels = 1)
+# level 1 of the active.s corresponds to a value of 0, 
+# indicating non-participation in the sexual network
+formation <- ~edges + absdiff("age") + nodefactor("active.s", levels = 1)
 
 # Input the appropriate target statistics for each term
 mean_degree <- 0.8
-edges <- mean_degree * (n_active_s/2)
+edges <- mean_degree * (n.active.s/2)
 avg.abs.age.diff <- 1.5
 absdiff <- edges * avg.abs.age.diff
-inactive_s.edges <- 0
+# No edges should contain a sexually inactive ego
+inactive.s.edges <- 0
 
-target.stats <- c(edges, absdiff, inactive_s.edges)
+target.stats <- c(edges, absdiff, inactive.s.edges)
 
 # Parameterize the dissolution model
 coef.diss <- dissolution_coefs(~offset(edges), 60, mean(dr_vec))
@@ -79,27 +88,36 @@ est <- netest(nw, formation, target.stats, coef.diss)
 # Model diagnostics
 dx <- netdx(est, nsims = nsims, ncores = ncores, nsteps = nsteps,
             nwstats.formula = ~edges + absdiff("age") + isolates + degree(0:5)
-            + nodefactor("active_s", levels = 1))
+            + nodefactor("active.s", levels = 1))
 print(dx)
 plot(dx)
 
 
 # Epidemic model simulation -----------------------------------------------
 
-# Epidemic model parameters
-param <- param.net(inf.prob = 0.15,
+# Epidemic model parameters for prophylaxis intervention scenario
+param_inter <- param.net(inf.prob = 0.15,
                    death.rates = dr_vec,
                    end.horizon = 52,
                    arrival.rate = dr / 52,
+                   
+                   # Intervention effectiveness/start time
+                   inter.eff = 0.50,
+                   inter.start = 1,
+                   # Intervention Cost
+                   inter.cost = 500000,
+                   
                    # Weekly costs by health status
-                   sus_cost = 150,
-                   inf_cost = 300,
+                   sus.cost = 150,
+                   inf.cost = 300,
                    # QALYs by health status
-                   sus_qaly = 1.00,
-                   inf_qaly = 0.75,
-                   # 
-                   age_decrement = -0.003,
-                   disc_rate = 0.03)
+                   sus.qaly = 1.00,
+                   inf.qaly = 0.75,
+                   
+                   # QALY reduction per year of age
+                   age.decrement = -0.003,
+                   # Discount rate for costs and QALYs
+                   disc.rate = 0.03)
 
 # Initial conditions
 init <- init.net(i.num = 50)
@@ -127,18 +145,56 @@ control <- control.net(type = NULL,
                        verbose = TRUE)
 
 # Run the network model simulation with netsim
-sim <- netsim(est, param, init, control)
-print(sim)
+sim_inter <- netsim(est, param_inter, init, control)
+print(sim_inter)
 
 # Plot outcomes
 par(mfrow = c(1, 3))
-plot(sim, y = "d.flow", mean.smooth = TRUE, qnts = 1, main = "Departures")
-plot(sim, y = "a.flow", mean.smooth = TRUE, qnts = 1, main = "Arrivals")
-plot(sim, y = "si.flow", mean.smooth = TRUE, qnts = 1, main = "Infections")
+plot(sim_inter, y = "d.flow", mean.smooth = TRUE, qnts = 1, main = "Departures")
+plot(sim_inter, y = "a.flow", mean.smooth = TRUE, qnts = 1, main = "Arrivals")
+plot(sim_inter, y = "si.flow", mean.smooth = TRUE, qnts = 1, main = "Infections")
 
 par(mfrow = c(2, 2))
-plot(sim, y = "cost", mean.smooth = TRUE, qnts = 1, main = "Costs (undiscounted)")
-plot(sim, y = "qaly", mean.smooth = TRUE, qnts = 1, main = "QALYs (undiscounted)")
-plot(sim, y = "cost.disc", mean.smooth = TRUE, qnts = 1, main = "Costs (discounted)")
-plot(sim, y = "qaly.disc", mean.smooth = TRUE, qnts = 1, main = "QALYs (discounted)")
+plot(sim_inter, y = "cost", mean.smooth = TRUE, qnts = 1, main = "Costs (undiscounted)")
+plot(sim_inter, y = "qaly", mean.smooth = TRUE, qnts = 1, main = "QALYs (undiscounted)")
+plot(sim_inter, y = "cost.disc", mean.smooth = TRUE, qnts = 1, main = "Costs (discounted)")
+plot(sim_inter, y = "qaly.disc", mean.smooth = TRUE, qnts = 1, main = "QALYs (discounted)")
 
+
+# Epidemic model parameters for no-intervention baseline (bl) scenario
+param_bl <- param.net(inf.prob = 0.15,
+                      death.rates = dr_vec,
+                      end.horizon = 52,
+                      arrival.rate = dr / 52,
+                      
+                      # Weekly costs by health status
+                      sus.cost = 150,
+                      inf.cost = 300,
+                      # QALYs by health status
+                      sus.qaly = 1.00,
+                      inf.qaly = 0.75,
+                      
+                      # QALY reduction per year of age
+                      age.decrement = -0.003,
+                      # Discount rate for costs and QALYs
+                      disc.rate = 0.03)
+
+# Run the network model simulation with netsim for baseline scenario
+sim_bl <- netsim(est, param_bl, init, control)
+
+# Load decision-analytic modeling package for cost-effectiveness analysis
+suppressMessages(library(dampack))
+
+# Cumulative discounted outcomes for each strategy are calculated with colSums
+# The mean of these cumulative outcomes is the expected cost/effect
+cost <- c(mean(colSums(sim_bl$epi$cost.disc, na.rm = TRUE)), 
+          mean(colSums(sim_inter$epi$cost.disc, na.rm = TRUE)))
+effect <- c(mean(colSums(sim_bl$epi$qaly.disc, na.rm = TRUE)), 
+            mean(colSums(sim_inter$epi$qaly.disc, na.rm = TRUE)))
+strategies <- c("No Intervention", "Universal Prophylaxis")
+
+# Calculate incremental cost-effectiveness ratio comparing competing strategies
+icer <- calculate_icers(cost = cost, effect = effect, strategies = strategies)
+icer
+
+plot(icer)

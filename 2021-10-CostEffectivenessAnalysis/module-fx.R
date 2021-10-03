@@ -17,39 +17,50 @@ costeffect <- function(dat, at) {
   status <- get_attr(dat, "status")
   
   # Import parameters
-  sus_cost <- get_param(dat, "sus_cost")
-  inf_cost <- get_param(dat, "inf_cost")
-  sus_qaly <- get_param(dat, "sus_qaly")
-  inf_qaly <- get_param(dat, "inf_qaly")
-  age_decrement <- get_param(dat, "age_decrement")
-  disc_rate <- get_param(dat, "disc_rate")
+  sus.cost <- get_param(dat, "sus.cost")
+  inf.cost <- get_param(dat, "inf.cost")
+  sus.qaly <- get_param(dat, "sus.qaly")
+  inf.qaly <- get_param(dat, "inf.qaly")
+  age.decrement <- get_param(dat, "age.decrement")
+  disc.rate <- get_param(dat, "disc.rate")
+  inter.cost <- get_param(dat, "inter.cost", override.null.error = TRUE)
+  inter.start <- get_param(dat, "inter.start", override.null.error = TRUE)
+  end.horizon <- get_param(dat, "end.horizon", override.null.error = TRUE)
   
   # Identify relevant sub-populations
   idsSus <- which(active == 1 & status == "s")
   idsInf <- which(active == 1 & status == "i")
   
   # Account for costs of each sub-population
-  pop_sus_cost <- length(idsSus) * sus_cost
-  pop_inf_cost <- length(idsInf) * inf_cost
+  pop.sus.cost <- length(idsSus) * sus.cost
+  pop.inf.cost <- length(idsInf) * inf.cost
+  
+  # Account for intervention costs
+  # Costs accrue uniformly from intervention start to end horizon
+  if(!is.null(inter.start)) {
+    inter.cost <- inter.cost / (end.horizon - inter.start)
+  } else {
+    inter.cost <- 0
+  }
   
   # Account for effects (QALYs) of each sub-population
   # QALY parameters by health state and age decrements must be converted to weekly time-step
-  pop_sus_qaly <- sum((age[idsSus] * age_decrement + sus_qaly) / 52, na.rm = TRUE)
-  pop_inf_qaly <- sum((age[idsInf] * age_decrement + inf_qaly) / 52, na.rm = TRUE)
+  pop.sus.qaly <- sum((age[idsSus] * age.decrement + sus.qaly) / 52, na.rm = TRUE)
+  pop.inf.qaly <- sum((age[idsInf] * age.decrement + inf.qaly) / 52, na.rm = TRUE)
   
   # Aggregate costs and effects
-  pop_cost <- pop_sus_cost + pop_inf_cost
-  pop_qaly <- pop_sus_qaly + pop_inf_qaly
+  pop.cost <- pop.sus.cost + pop.inf.cost + inter.cost
+  pop.qaly <- pop.sus.qaly + pop.inf.qaly
   
   # Discount aggregated costs and effects
-  pop_cost_disc <- pop_cost * (1 - disc_rate) ^ (at / 52)
-  pop_qaly_disc <- pop_qaly * (1 - disc_rate) ^ (at / 52)
+  pop.cost.disc <- pop.cost * (1 - disc.rate) ^ (at / 52)
+  pop.qaly.disc <- pop.qaly * (1 - disc.rate) ^ (at / 52)
   
   ## Summary statistics ##
-  dat <- set_epi(dat, "cost", at, pop_cost)
-  dat <- set_epi(dat, "qaly", at, pop_qaly)
-  dat <- set_epi(dat, "cost.disc", at, pop_cost_disc)
-  dat <- set_epi(dat, "qaly.disc", at, pop_qaly_disc)
+  dat <- set_epi(dat, "cost", at, pop.cost)
+  dat <- set_epi(dat, "qaly", at, pop.qaly)
+  dat <- set_epi(dat, "cost.disc", at, pop.cost.disc)
+  dat <- set_epi(dat, "qaly.disc", at, pop.qaly.disc)
   
   return(dat)
 }
@@ -78,7 +89,7 @@ dfunc <- function(dat, at) {
   
   ## Attributes
   active <- get_attr(dat, "active")
-  active_s <- get_attr(dat, "active_s")
+  active.s <- get_attr(dat, "active.s")
   exitTime <- get_attr(dat, "exitTime")
   age <- get_attr(dat, "age")
   status <- get_attr(dat, "status")
@@ -106,23 +117,24 @@ dfunc <- function(dat, at) {
 
     ## Update nodal attributes
     if (nDeaths > 0) {
-      active_s[idsDeaths] <- 0
+      active.s[idsDeaths] <- 0
       active[idsDeaths] <- 0
       exitTime[idsDeaths] <- at
     }
     
     ## 65+ who did not die this time-step
-    idsRetire <- setdiff(which(age >= 65 & active_s == 1), idsDeaths)
-    active_s[idsRetire] <- 0
+    idsRetire <- setdiff(which(age >= 65 & active.s == 1), idsDeaths)
+    active.s[idsRetire] <- 0
     
   }
   
+  # All individuals become sexually inactive at end horizon
   if (at == end.horizon) {
-    active_s <- rep(0, length(active_s))
+    active.s <- rep(0, length(active.s))
   }
 
   ## Reset attr
-  dat <- set_attr(dat, "active_s", active_s)
+  dat <- set_attr(dat, "active.s", active.s)
   dat <- set_attr(dat, "active", active)
   dat <- set_attr(dat, "exitTime", exitTime)
 
@@ -136,10 +148,9 @@ dfunc <- function(dat, at) {
 # Updated Arrivals Module ----------------------------------------------------
 
 afunc <- function(dat, at) {
-  # browser()
   
+  # If the end horizon has been reached, skip arrival module
   end.horizon <- get_param(dat, "end.horizon")
-  
   if (at >= end.horizon) {
     return(dat)
   }
@@ -158,7 +169,7 @@ afunc <- function(dat, at) {
     dat <- append_attr(dat, "status", "s", nArrivals)
     dat <- append_attr(dat, "infTime", NA, nArrivals)
     dat <- append_attr(dat, "age", 16, nArrivals)
-    dat <- append_attr(dat, "active_s", 1, nArrivals)
+    dat <- append_attr(dat, "active.s", 1, nArrivals)
   }
 
   ## Summary statistics
@@ -171,18 +182,13 @@ afunc <- function(dat, at) {
 
 ifunc <- function (dat, at) {
   
-  end.horizon <- get_param(dat, "end.horizon")
-  
-  # 
+  # If the end horizon has been reached, skip infection module
+  end.horizon <- get_param(dat, "end.horizon", override.null.error = TRUE)
   if (at >= end.horizon) {
     return(dat)
   }
   
-  #
-  active_s <- get_attr(dat, "active_s")
-  #
-  idsActive_s <- which(active_s == 1)
-  
+  active.s <- get_attr(dat, "active.s")
   active <- get_attr(dat, "active")
   status <- get_attr(dat, "status")
   infTime <- get_attr(dat, "infTime")
@@ -190,6 +196,9 @@ ifunc <- function (dat, at) {
   act.rate <- get_param(dat, "act.rate")
   inter.eff <- get_param(dat, "inter.eff", override.null.error = TRUE)
   inter.start <- get_param(dat, "inter.start", override.null.error = TRUE)
+  
+  # Identify which individuals are still sexually active
+  idsActive.s <- which(active.s == 1)
   idsInf <- which(active == 1 & status == "i")
   nActive <- sum(active == 1)
   nElig <- length(idsInf)
@@ -197,14 +206,15 @@ ifunc <- function (dat, at) {
   if (nElig > 0 && nElig < nActive) {
     del <- discord_edgelist(dat, at, network = 1)
     if (!(is.null(del))) {
-      #
-      del <- del[which(del$sus %in% idsActive_s & del$inf %in% idsActive_s),]
+      # Remove rows of discordant edge list with an inactive partner
+      del <- del[which(del$sus %in% idsActive.s & del$inf %in% idsActive.s),]
       del$infDur <- at - infTime[del$inf]
       del$infDur[del$infDur == 0] <- 1
       linf.prob <- length(inf.prob)
       del$transProb <- ifelse(del$infDur <= linf.prob, 
                               inf.prob[del$infDur], inf.prob[linf.prob])
       if (!is.null(inter.eff) && at >= inter.start) {
+        # Apply reduction in transmission probability due to prophylaxis
         del$transProb <- del$transProb * (1 - inter.eff)
       }
       lact.rate <- length(act.rate)

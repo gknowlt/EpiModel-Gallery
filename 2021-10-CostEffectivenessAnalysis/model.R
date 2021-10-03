@@ -14,17 +14,23 @@ suppressMessages(library(EpiModel))
 rm(list = ls())
 eval(parse(text = print(commandArgs(TRUE)[1])))
 
-nsims <- 1
-ncores <- 1
-nsteps <- 7500
+if (interactive()) {
+  nsims <- 5
+  ncores <- 5
+  nsteps <- 256
+} else {
+  nsims <- 1
+  ncores <- 1
+  nsteps <- 104
+}
 
 
 # Vital Dynamics Setup ----------------------------------------------------
 
+# Yearly mortality rates by age: (1-84: 0.02, 85-99: 1.00, 100+: 2.00)
 ages <- 0:100
-
-dr <- 0.02 / 52
-death_rate_pp_pw <- c(dr / 52, 20*dr / 52, 100*dr / 52)
+dr <- 0.02
+death_rate_pp_pw <- c(dr / 52, 50*dr / 52, 100*dr / 52)
 
 # Build out a mortality rate vector
 age_spans <- c(85, 15, 1)
@@ -35,8 +41,10 @@ data.frame(ages, dr_vec)
 
 # Initialize the network
 n <- 500
-ages <- 16:85
-ageVec <- sample(ages, n, replace = TRUE)
+init_ages <- 16:85
+ageVec <- sample(init_ages, n, replace = TRUE)
+
+# Throughout simulation, individuals over age 65 are sexually inactive
 activeVec <- ifelse(ageVec <= 65, 1, 0)
 
 n_active_s <- length(which(ageVec <= 65))
@@ -68,12 +76,12 @@ coef.diss
 # Fit the model
 est <- netest(nw, formation, target.stats, coef.diss)
 
-# # Model diagnostics
-# dx <- netdx(est, nsims = nsims, ncores = ncores, nsteps = nsteps,
-#             nwstats.formula = ~edges + absdiff("age") + isolates + degree(0:5)
-#             + nodefactor("active_s", levels = 1))
-# print(dx)
-# plot(dx)
+# Model diagnostics
+dx <- netdx(est, nsims = nsims, ncores = ncores, nsteps = nsteps,
+            nwstats.formula = ~edges + absdiff("age") + isolates + degree(0:5)
+            + nodefactor("active_s", levels = 1))
+print(dx)
+plot(dx)
 
 
 # Epidemic model simulation -----------------------------------------------
@@ -81,9 +89,17 @@ est <- netest(nw, formation, target.stats, coef.diss)
 # Epidemic model parameters
 param <- param.net(inf.prob = 0.15,
                    death.rates = dr_vec,
-                   end.horizon = 1041,
-                   # end.horizon = 10,
-                   arrival.rate = mean(dr_vec))
+                   end.horizon = 52,
+                   arrival.rate = dr / 52,
+                   # Weekly costs by health status
+                   sus_cost = 150,
+                   inf_cost = 300,
+                   # QALYs by health status
+                   sus_qaly = 1.00,
+                   inf_qaly = 0.75,
+                   # 
+                   age_decrement = -0.003,
+                   disc_rate = 0.03)
 
 # Initial conditions
 init <- init.net(i.num = 50)
@@ -105,6 +121,7 @@ control <- control.net(type = NULL,
                        departures.FUN = dfunc,
                        arrivals.FUN = afunc,
                        infection.FUN = ifunc,
+                       cea.FUN = costeffect,
                        resim_nets.FUN = resimfunc,
                        resimulate.network = TRUE,
                        verbose = TRUE)
@@ -114,20 +131,14 @@ sim <- netsim(est, param, init, control)
 print(sim)
 
 # Plot outcomes
-par(mfrow = c(1,2))
-plot(sim, main = "State Prevalences", popfrac = TRUE)
-plot(sim, main = "State Sizes", sim.lines = TRUE,
-     qnts = FALSE, mean.smooth = FALSE)
-
-par(mfrow = c(1, 2))
-plot(sim, y = "num", main = "Population Size", qnts = 1, ylim = c(0, 550))
-plot(sim, y = "meanAge", main = "Mean Age", qnts = 1, ylim = c(0, 150))
-
 par(mfrow = c(1, 3))
 plot(sim, y = "d.flow", mean.smooth = TRUE, qnts = 1, main = "Departures")
 plot(sim, y = "a.flow", mean.smooth = TRUE, qnts = 1, main = "Arrivals")
 plot(sim, y = "si.flow", mean.smooth = TRUE, qnts = 1, main = "Infections")
 
-# Examine the data
-df <- as.data.frame(sim, out = "mean")
-head(df, 25)
+par(mfrow = c(2, 2))
+plot(sim, y = "cost", mean.smooth = TRUE, qnts = 1, main = "Costs (undiscounted)")
+plot(sim, y = "qaly", mean.smooth = TRUE, qnts = 1, main = "QALYs (undiscounted)")
+plot(sim, y = "cost.disc", mean.smooth = TRUE, qnts = 1, main = "Costs (discounted)")
+plot(sim, y = "qaly.disc", mean.smooth = TRUE, qnts = 1, main = "QALYs (discounted)")
+

@@ -9,13 +9,47 @@
 
 # Cost/Utility Tracking Module ------------------------------------------------
 
-ce <- function(dat, at) {
+costeffect <- function(dat, at) {
   
-  # #
-  # age <- get_attr()
-  # 
-  # ## Summary statistics ##
-  # dat <- set_epi()
+  # Import attributes
+  active <- get_attr(dat, "active")
+  age <- get_attr(dat, "age")
+  status <- get_attr(dat, "status")
+  
+  # Import parameters
+  sus_cost <- get_param(dat, "sus_cost")
+  inf_cost <- get_param(dat, "inf_cost")
+  sus_qaly <- get_param(dat, "sus_qaly")
+  inf_qaly <- get_param(dat, "inf_qaly")
+  age_decrement <- get_param(dat, "age_decrement")
+  disc_rate <- get_param(dat, "disc_rate")
+  
+  # Identify relevant sub-populations
+  idsSus <- which(active == 1 & status == "s")
+  idsInf <- which(active == 1 & status == "i")
+  
+  # Account for costs of each sub-population
+  pop_sus_cost <- length(idsSus) * sus_cost
+  pop_inf_cost <- length(idsInf) * inf_cost
+  
+  # Account for effects (QALYs) of each sub-population
+  # QALY parameters by health state and age decrements must be converted to weekly time-step
+  pop_sus_qaly <- sum((age[idsSus] * age_decrement + sus_qaly) / 52, na.rm = TRUE)
+  pop_inf_qaly <- sum((age[idsInf] * age_decrement + inf_qaly) / 52, na.rm = TRUE)
+  
+  # Aggregate costs and effects
+  pop_cost <- pop_sus_cost + pop_inf_cost
+  pop_qaly <- pop_sus_qaly + pop_inf_qaly
+  
+  # Discount aggregated costs and effects
+  pop_cost_disc <- pop_cost * (1 - disc_rate) ^ (at / 52)
+  pop_qaly_disc <- pop_qaly * (1 - disc_rate) ^ (at / 52)
+  
+  ## Summary statistics ##
+  dat <- set_epi(dat, "cost", at, pop_cost)
+  dat <- set_epi(dat, "qaly", at, pop_qaly)
+  dat <- set_epi(dat, "cost.disc", at, pop_cost_disc)
+  dat <- set_epi(dat, "qaly.disc", at, pop_qaly_disc)
   
   return(dat)
 }
@@ -42,9 +76,6 @@ aging <- function(dat, at) {
 
 dfunc <- function(dat, at) {
   
-  if (at == 100) {
-    browser()
-  }
   ## Attributes
   active <- get_attr(dat, "active")
   active_s <- get_attr(dat, "active_s")
@@ -86,9 +117,9 @@ dfunc <- function(dat, at) {
     
   }
   
-  # if (at == end.horizon) {
-  #   active_s <- rep(0, length(active_s))
-  # }
+  if (at == end.horizon) {
+    active_s <- rep(0, length(active_s))
+  }
 
   ## Reset attr
   dat <- set_attr(dat, "active_s", active_s)
@@ -105,6 +136,7 @@ dfunc <- function(dat, at) {
 # Updated Arrivals Module ----------------------------------------------------
 
 afunc <- function(dat, at) {
+  # browser()
   
   end.horizon <- get_param(dat, "end.horizon")
   
@@ -135,8 +167,9 @@ afunc <- function(dat, at) {
   return(dat)
 }
 
+# Updated Infection Module ---------------------------------------------------
+
 ifunc <- function (dat, at) {
-  # browser()
   
   end.horizon <- get_param(dat, "end.horizon")
   
@@ -196,9 +229,14 @@ ifunc <- function (dat, at) {
   return(dat)
 }
 
+# Updated Network Resimulation Module ----------------------------------------
+
 resimfunc <- function (dat, at) {
   
-  #
+  # This function is identical to the default of EpiModel::resim_nets()
+  # except for the following line.
+  # Skipping over this function after the start of the end horizon greatly
+  # improves computational speed.
   end.horizon <- get_param(dat, "end.horizon")
   if (at >= end.horizon) {
     return(dat)

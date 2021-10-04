@@ -14,16 +14,19 @@ suppressMessages(library(EpiModel))
 rm(list = ls())
 eval(parse(text = print(commandArgs(TRUE)[1])))
 
-if (interactive()) {
-  nsims <- 5
-  ncores <- 5
-  nsteps <- 256
-} else {
-  nsims <- 10
-  ncores <- 1
-  nsteps <- 104
-}
+# if (interactive()) {
+#   nsims <- 5
+#   ncores <- 5
+#   nsteps <- 256
+# } else {
+#   nsims <- 10
+#   ncores <- 1
+#   nsteps <- 104
+# }
 
+nsims <- 10
+ncores <- 1
+nsteps <- 118
 
 # Vital Dynamics Setup ----------------------------------------------------
 
@@ -97,27 +100,28 @@ plot(dx)
 
 # Epidemic model parameters for prophylaxis intervention scenario
 param_inter <- param.net(inf.prob = 0.15,
-                   death.rates = dr_vec,
-                   end.horizon = 52,
-                   arrival.rate = dr / 52,
-                   
-                   # Intervention effectiveness/start time
-                   inter.eff = 0.50,
-                   inter.start = 1,
-                   # Intervention Cost
-                   inter.cost = 500000,
-                   
-                   # Weekly costs by health status
-                   sus.cost = 150,
-                   inf.cost = 300,
-                   # QALYs by health status
-                   sus.qaly = 1.00,
-                   inf.qaly = 0.75,
-                   
-                   # QALY reduction per year of age
-                   age.decrement = -0.003,
-                   # Discount rate for costs and QALYs
-                   disc.rate = 0.03)
+                         death.rates = dr_vec,
+                         cea.start = 14,
+                         end.horizon = 52 + 14,
+                         arrival.rate = dr / 52,
+                         
+                         # Intervention effectiveness/start time
+                         inter.eff = 0.50,
+                         inter.start = 14,
+                         # Intervention Cost
+                         inter.cost = 500000,
+                         
+                         # Weekly costs by health status
+                         sus.cost = 150,
+                         inf.cost = 300,
+                         # QALYs by health status
+                         sus.qaly = 1.00,
+                         inf.qaly = 0.75,
+                         
+                         # QALY reduction per year of age
+                         age.decrement = -0.003,
+                         # Discount rate for costs and QALYs
+                         disc.rate = 0.03)
 
 # Initial conditions
 init <- init.net(i.num = 50)
@@ -140,8 +144,8 @@ control <- control.net(type = NULL,
                        arrivals.FUN = afunc,
                        infection.FUN = ifunc,
                        cea.FUN = costeffect,
-                       resim_nets.FUN = resimfunc,
-                       resimulate.network = TRUE,
+                       # resim_nets.FUN = resimfunc,
+                       # resimulate.network = TRUE,
                        verbose = TRUE)
 
 # Run the network model simulation with netsim
@@ -164,7 +168,8 @@ plot(sim_inter, y = "qaly.disc", mean.smooth = TRUE, qnts = 1, main = "QALYs (di
 # Epidemic model parameters for no-intervention baseline (bl) scenario
 param_bl <- param.net(inf.prob = 0.15,
                       death.rates = dr_vec,
-                      end.horizon = 52,
+                      end.horizon = 52 + 14,
+                      cea.start = 14,
                       arrival.rate = dr / 52,
                       
                       # Weekly costs by health status
@@ -193,8 +198,72 @@ effect <- c(mean(colSums(sim_bl$epi$qaly.disc, na.rm = TRUE)),
             mean(colSums(sim_inter$epi$qaly.disc, na.rm = TRUE)))
 strategies <- c("No Intervention", "Universal Prophylaxis")
 
+
 # Calculate incremental cost-effectiveness ratio comparing competing strategies
 icer <- calculate_icers(cost = cost, effect = effect, strategies = strategies)
 icer
 
 plot(icer)
+
+
+## Calculating cumulative costs and effects externally to EpiModel simulation ##
+calc_outcomes <- function(sim, intervention) {
+  
+  # Define parameters
+  end.horizon <- 52 + 14
+  sus.cost <- 150
+  inf.cost <- 300
+  sus.qaly <- 1.00
+  inf.qaly <- 0.75
+  age.decrement <- -0.003
+  disc.rate <- 0.03
+  cea.start <- 14
+  nsteps <- 118
+  inter.eff <- 0.50
+  inter.start <- 14
+  inter.cost <- 500000
+  
+  pop.sus.cost <- sim$epi$s.num[(cea.start:nsteps) - 1,] * sus.cost
+  pop.inf.cost <- sim$epi$i.num[(cea.start:nsteps) - 1,] * inf.cost
+  
+  pop.sus.qaly <- sim$epi$s.num[(cea.start:nsteps) - 1,] * sus.qaly
+  pop.inf.qaly <- sim$epi$i.num[(cea.start:nsteps) - 1,] * inf.qaly
+  
+  # meanAge <- sim$epi$meanAge[(cea.start:nsteps) - 1,]
+  meanAge <- sim$epi$meanAge[(cea.start:nsteps),]
+  pop.num <- sim$epi$num[(cea.start:nsteps) - 1,]
+  
+  if (intervention == TRUE) {
+    inter.cost.vec <- c(rep(inter.cost / (end.horizon - cea.start), end.horizon - cea.start),
+                        rep(0, nsteps - end.horizon + 1))
+  } else {
+    inter.cost.vec <- rep(0, nsteps - cea.start + 1)
+  }
+  
+  pop.qaly <- ((meanAge * pop.num * age.decrement) + pop.sus.qaly + pop.inf.qaly) / 52
+  pop.cost <- (pop.sus.cost + pop.inf.cost + inter.cost.vec)
+  
+  pop.cost.disc <- pop.cost * (1 - disc.rate) ^ (0:(nsteps - cea.start) / 52)
+  pop.qaly.disc <- pop.qaly * (1 - disc.rate) ^ (0:(nsteps - cea.start) / 52)
+  
+  cuml.qaly.disc <- mean(colSums(pop.qaly.disc, na.rm = TRUE))
+  cuml.cost.disc <- mean(colSums(pop.cost.disc, na.rm = TRUE))
+  
+  return(list(cuml.qaly.disc = cuml.qaly.disc, cuml.cost.disc = cuml.cost.disc))
+}
+
+
+
+
+cost <- c(calc_outcomes(sim = sim_bl, intervention = FALSE)$cuml.cost.disc, 
+          calc_outcomes(sim = sim_inter, intervention = TRUE)$cuml.cost.disc)
+effect <- c(calc_outcomes(sim = sim_bl, intervention = FALSE)$cuml.qaly.disc, 
+            calc_outcomes(sim = sim_inter, intervention = TRUE)$cuml.qaly.disc)
+strategies <- c("No Intervention", "Universal Prophylaxis")
+
+
+# Calculate incremental cost-effectiveness ratio comparing competing strategies
+icer2 <- calculate_icers(cost = cost, effect = effect, strategies = strategies)
+icer2
+icer
+

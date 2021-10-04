@@ -11,6 +11,12 @@
 
 costeffect <- function(dat, at) {
   
+  # If the start of the analytic time horizon has not been reached, skip module
+  cea.start <- get_param(dat, "cea.start")
+  if (at < cea.start) {
+    return(dat)
+  }
+  
   # Import attributes
   active <- get_attr(dat, "active")
   age <- get_attr(dat, "age")
@@ -37,7 +43,7 @@ costeffect <- function(dat, at) {
   
   # Account for intervention costs
   # Costs accrue uniformly from intervention start to end horizon
-  if(!is.null(inter.start)) {
+  if(!is.null(inter.start) & at < end.horizon) {
     inter.cost <- inter.cost / (end.horizon - inter.start)
   } else {
     inter.cost <- 0
@@ -53,8 +59,9 @@ costeffect <- function(dat, at) {
   pop.qaly <- pop.sus.qaly + pop.inf.qaly
   
   # Discount aggregated costs and effects
-  pop.cost.disc <- pop.cost * (1 - disc.rate) ^ (at / 52)
-  pop.qaly.disc <- pop.qaly * (1 - disc.rate) ^ (at / 52)
+  t <- at - cea.start
+  pop.cost.disc <- pop.cost * (1 - disc.rate) ^ (t / 52)
+  pop.qaly.disc <- pop.qaly * (1 - disc.rate) ^ (t / 52)
   
   ## Summary statistics ##
   dat <- set_epi(dat, "cost", at, pop.cost)

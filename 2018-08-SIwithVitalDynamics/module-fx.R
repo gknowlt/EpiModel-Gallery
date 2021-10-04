@@ -27,9 +27,6 @@ aging <- function(dat, at) {
 # Update Departure Module -----------------------------------------------------
 
 dfunc <- function(dat, at) {
-  if (at == 50) {
-    browser()
-  }
 
   ## Attributes
   active <- get_attr(dat, "active")

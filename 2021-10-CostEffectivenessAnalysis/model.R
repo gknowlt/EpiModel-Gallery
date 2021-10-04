@@ -144,6 +144,8 @@ control <- control.net(type = NULL,
                        arrivals.FUN = afunc,
                        infection.FUN = ifunc,
                        cea.FUN = costeffect,
+                       # resim_nets.FUN = resimfunc,
+                       # resimulate.network = TRUE,
                        verbose = TRUE)
 
 # Run the network model simulation with netsim

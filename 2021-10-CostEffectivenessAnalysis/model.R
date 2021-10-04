@@ -142,7 +142,7 @@ control <- control.net(type = NULL,
                        cea.FUN = costeffect,
                        resim_nets.FUN = resimfunc,
                        resimulate.network = TRUE,
-                       verbose = TRUE)
+                       verbose = FALSE)
 
 # Run the network model simulation with netsim
 sim_inter <- netsim(est, param_inter, init, control)

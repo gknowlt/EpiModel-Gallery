@@ -144,8 +144,8 @@ control <- control.net(type = NULL,
                        arrivals.FUN = afunc,
                        infection.FUN = ifunc,
                        cea.FUN = costeffect,
-                       # resim_nets.FUN = resimfunc,
-                       # resimulate.network = TRUE,
+                       resim_nets.FUN = resimfunc,
+                       resimulate.network = TRUE,
                        verbose = TRUE)
 
 # Run the network model simulation with netsim
@@ -187,6 +187,9 @@ param_bl <- param.net(inf.prob = 0.15,
 # Run the network model simulation with netsim for baseline scenario
 sim_bl <- netsim(est, param_bl, init, control)
 
+
+# Cost-effectiveness Analysis -------------------------------------------------
+
 # Load decision-analytic modeling package for cost-effectiveness analysis
 suppressMessages(library(dampack))
 
@@ -200,8 +203,10 @@ strategies <- c("No Intervention", "Universal Prophylaxis")
 
 
 # Calculate incremental cost-effectiveness ratio comparing competing strategies
-icer <- calculate_icers(cost = cost, effect = effect, strategies = strategies)
-icer
+icer_internal <- calculate_icers(cost = cost, 
+                                 effect = effect, 
+                                 strategies = strategies)
+icer_internal
 
 plot(icer)
 
@@ -229,18 +234,20 @@ calc_outcomes <- function(sim, intervention) {
   pop.sus.qaly <- sim$epi$s.num[(cea.start:nsteps) - 1,] * sus.qaly
   pop.inf.qaly <- sim$epi$i.num[(cea.start:nsteps) - 1,] * inf.qaly
   
-  # meanAge <- sim$epi$meanAge[(cea.start:nsteps) - 1,]
   meanAge <- sim$epi$meanAge[(cea.start:nsteps),]
   pop.num <- sim$epi$num[(cea.start:nsteps) - 1,]
   
   if (intervention == TRUE) {
-    inter.cost.vec <- c(rep(inter.cost / (end.horizon - cea.start), end.horizon - cea.start),
-                        rep(0, nsteps - end.horizon + 1))
+    inter.cost.vec <- c(rep(inter.cost / (end.horizon - cea.start), 
+                            end.horizon - cea.start),
+                        rep(0, 
+                            nsteps - end.horizon + 1))
   } else {
     inter.cost.vec <- rep(0, nsteps - cea.start + 1)
   }
   
-  pop.qaly <- ((meanAge * pop.num * age.decrement) + pop.sus.qaly + pop.inf.qaly) / 52
+  pop.qaly <- ((meanAge * pop.num * age.decrement) + 
+                 pop.sus.qaly + pop.inf.qaly) / 52
   pop.cost <- (pop.sus.cost + pop.inf.cost + inter.cost.vec)
   
   pop.cost.disc <- pop.cost * (1 - disc.rate) ^ (0:(nsteps - cea.start) / 52)
@@ -249,7 +256,8 @@ calc_outcomes <- function(sim, intervention) {
   cuml.qaly.disc <- mean(colSums(pop.qaly.disc, na.rm = TRUE))
   cuml.cost.disc <- mean(colSums(pop.cost.disc, na.rm = TRUE))
   
-  return(list(cuml.qaly.disc = cuml.qaly.disc, cuml.cost.disc = cuml.cost.disc))
+  return(list(cuml.qaly.disc = cuml.qaly.disc, 
+              cuml.cost.disc = cuml.cost.disc))
 }
 
 
@@ -263,7 +271,7 @@ strategies <- c("No Intervention", "Universal Prophylaxis")
 
 
 # Calculate incremental cost-effectiveness ratio comparing competing strategies
-icer2 <- calculate_icers(cost = cost, effect = effect, strategies = strategies)
-icer2
-icer
-
+icer_external <- calculate_icers(cost = cost, 
+                                 effect = effect, 
+                                 strategies = strategies)
+icer_external

@@ -14,19 +14,15 @@ suppressMessages(library(EpiModel))
 rm(list = ls())
 eval(parse(text = print(commandArgs(TRUE)[1])))
 
-# if (interactive()) {
-#   nsims <- 5
-#   ncores <- 5
-#   nsteps <- 256
-# } else {
-#   nsims <- 10
-#   ncores <- 1
-#   nsteps <- 104
-# }
-
-nsims <- 10
-ncores <- 1
-nsteps <- 118
+if (interactive()) {
+  nsims <- 5
+  ncores <- 5
+  nsteps <- 256
+} else {
+  nsims <- 10
+  ncores <- 1
+  nsteps <- 104
+}
 
 # Vital Dynamics Setup ----------------------------------------------------
 
@@ -152,7 +148,7 @@ control <- control.net(type = NULL,
 sim_inter <- netsim(est, param_inter, init, control)
 print(sim_inter)
 
-# Plot outcomes
+# Plot outcomes for prophylaxis intervention scenario
 par(mfrow = c(1, 3))
 plot(sim_inter, y = "d.flow", mean.smooth = TRUE, qnts = 1, main = "Departures")
 plot(sim_inter, y = "a.flow", mean.smooth = TRUE, qnts = 1, main = "Arrivals")
@@ -184,7 +180,7 @@ param_bl <- param.net(inf.prob = 0.15,
                       # Discount rate for costs and QALYs
                       disc.rate = 0.03)
 
-# Run the network model simulation with netsim for baseline scenario
+# Run the network model simulation with netsim for no intervention scenario
 sim_bl <- netsim(est, param_bl, init, control)
 
 
@@ -202,16 +198,17 @@ effect <- c(mean(colSums(sim_bl$epi$qaly.disc, na.rm = TRUE)),
 strategies <- c("No Intervention", "Universal Prophylaxis")
 
 
-# Calculate incremental cost-effectiveness ratio comparing competing strategies
+# Calculate incremental cost-effectiveness ratio (ICER) comparing competing strategies
 icer_internal <- calculate_icers(cost = cost, 
                                  effect = effect, 
                                  strategies = strategies)
 icer_internal
 
-plot(icer)
+# Plot ICER
+plot(icer_internal)
 
 
-## Calculating cumulative costs and effects externally to EpiModel simulation ##
+## Calculating cumulative costs and effects external to EpiModel simulation ##
 calc_outcomes <- function(sim, intervention) {
   
   # Define parameters

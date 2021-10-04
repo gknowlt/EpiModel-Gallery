@@ -1,55 +1,53 @@
 # Simple Cost-effectiveness Model (Simple SI model with cost and utility tracking)
 
 ## Description
-This example shows how to model a relatively simple SI epidemic over a dynamic network, but with vital dynamic processes for aging, births, and deaths. The modules implement a different approach to mortality, in which the stochastic death process is a function of both an age-specific mortality rate and disease-induced mortality. The network model uses an `absdiff` term to specify a parametric form of age mixing, and that age attribute that is initialized on the network is then pulled into the epidemic modules.
+This example shows how to use EpiModel to conduct a cost-effectiveness analysis in the context of an SI epidemic within a dynamic population undergoing birth, aging, and death. The two competing strategies compared in this cost-effectiveness analysis are 1) a baseline scenario with no intervention in place and 2) a universal prophylaxis intervention where the probability of infection per discordant sex act is halved. It is assumed that the clinical care accrued by healthy individuals is less than that of infected individuals, and by reducing the rate of infection, the prophylaxis intervention both improves health (in terms of quality adjusted life years, or QALYs) and reduces clinical care costs. However, the implementation costs of the intervention are substantial and must be weighed against the program's benefits. Given these trade-offs, we seek to answer the question of whether the prophylaxis intervention represents a cost-effective investment of resources from a population-level health care perspective.
 
-Within the module that simulates the sexual network(s), you must manually remove the partnerships that involve egos who are still alive but no longer sexually active. Ordinarily, egos are automatically deleted by the departure module when they reach age 65, but because those individuals are being retained for the purposes of tracking quality of life and health care spending, these inactive individuals must be removed from the edge list. In this module and several others, an additional chunk of code is added to instruct EpiModel to skip over this module when the time-step has exceeded the end of the main analytic time window/the beginning of the end horizon. 
+There are a number of adjustments that must be made to the estimation of the initial network as well as the simulation modules in order to conduct a cost-effectiveness analysis. These changes are described here only broadly, but further details can be found within comments surrounding the example code.
 
-Within the departure module, we add more code to differentiate between individuals that become sexually inactive and individuals who die. We add in a new indicator for egos who have reached age 65 at this time-step (named `ids65`) and set the `active` attribute to be equal to `0`. Unlike model code in other versions of EpiModelHIV, those in `ids65` are not included in the vector of egos to delete from the simulation, `idsDepAll`. 
+Firstly, the distinction must be made between egos who are sexually active (attribute variable `active.s`) versus those who are alive (attribute variable `active`). Individuals who are sexually inactive will not participate in the sexual network, but they should still accrue clinical care costs and QALYs until death. Individuals over age 65 are assumed to be "sexually retired", and the fitted sexual network must prevent the formation of sexual partnerships with such individuals.
 
-Deeper in the `departure_msm` module, another change is made to facilitate the simulation of the end horizon. When the time-step of the simulation reaches the beginning of the end-horizon, all ego's `active` attribute is set to `0`.
+Secondly, we must carefully consider the time horizon of our analysis and specify the time-step at which tracking of costs and effects begins, which usually aligns with the initiation of the intervention(s) in question. We also must specify a final time-step for the analytic time horizon, when all processes related to disease transmission, population entry, and sexual dynamics are stopped. In order to fully capture the health and costs of individuals still living at the end of this main time horizon, we continue the simulation and cost/QALY tracking until all individuals have died. These residual costs and QALYs of individuals still living at the end of the main time horizon are known as "end horizon" effects. In the code that accompanies this example, the simulation is only run only for a brief section of the end horizon and not until all individuals have died in order to reduce computing time.
 
-During the simulation of the end horizon, certain modules are disabled so that transmission of HIV/STIs cease but other processes related to testing, treatment, disease progression, and outcome tracking continue.
-
-If QALYs are age-adjusted additively, then we can easily calculate QALYs externally. The age decrement would be equal to the following at each time-step: (age.mean) * (num.alive) * age.adj
-If QALYs are age-adjusted multiplicatively, then the picture becomes more complicated. We would need to know the mean (or sum) of ages within each separate group for each health outcome.
-The number of individuals in each health group will also need to be tracked whether or not age depreciation is accounted for. Within the prevalence module, new trackers should be added akin to `dat$epi$num.nohiv.prep[at] <- length(ids.nohiv.prep)` seen at the end of `track_util_msm()` within the vignette `cea_module_development.Rmd`.
+Thirdly, depending on the complexity of the functions defining costs and effects for simulated individuals, a cost-effectiveness module may need to be added to the simulation. Under certain circumstances, it is possible to calculate all costs and effects externally to the simulation using only the `sim$epi` output. Both methods are employed for the purpose of demonstration in `model.R`.
 
 ### Modules
 The **cost-effectiveness module** (function = `costeffect`) calculates the costs and QALYs accrued by individuals along with relevant intervention costs at each time-step. Individual costs and QALYs are functions of attributes within the model.
 
-The **aging module** (function = `aging`) sets up the age attribute at the initial time step by pulling from the network object. Then it will subsequently update the age attribute as updating the age in increments of a week at each time step.
+The **aging module** (function = `aging`) sets up the age attribute at the initial time step by pulling from the network object. Then it will subsequently update the age attribute in increments of a week at each time step for individuals who are still alive (attribute `active == 1`).
 
-The **death module** (function = `dfunc`)  simulates mortality as a function of an age-specific mortality rate and disease-induced mortality. 
+The **death module** (function = `dfunc`)  simulates mortality as a function of an age-specific mortality rate. Forces egos into sexual retirement at age 65. Egos who sexually retire but do not die continue to be tracked in cost-effectiveness module.
 
-The **birth module** (function = `bfunc`) implements a more simplified birth process compared to the built-in birth module, mainly for greater legibility. Note that the `age` attribute must be set on both the `attr` list and the `nw` object for new incoming nodes. 
+The **arrival module** (function = `afunc`) implements an updated population arrival process. This module is disabled upon reaching the end horizon.
+
+The **infection module** (function = `ifunc`) implements SI disease transmission. Transmission is disabled for lingering partnerships involving a sexually inactive ego, and this module is disabled upon reaching the end horizon.
+
+The **network resimulation module** (function = `resimfunc`) resimulates the sexual network at each timestep as individuals sexually retire, die, or enter the population. This module is identical to the default module except that it is disabled upon reaching the end horizon, greatly accelerating computational speed.
 
 ### Parameters
 The epidemic model parameters are basic here because we're not changing any of the core epidemiology from a simple SI model.
 
-* `cea.start`: sets the time-step at which the accounting for costs and effects begins to take place.
+* `cea.start`: the time-step at which the accounting for costs and effects begins to take place.
 
-* `end.horizon`: When we reach the end of the analytic time window, we enter the "end horizon". During the end horizon, further HIV transmission, PrEP usage, and new entry to the population are disabled, and the health status and treatment behaviors of individuals remaining in the population are simulated until death. The purpose of extending the time horizon in this way is to capture the full costs and effects accrued by individuals remaining at the end of the analytic time horizon. If the time horizon is abruptly truncated, then the QALYs gained from averting HIV infections towards the end of the window will not be fully captured. This is especially important when the interventions have a significant impact on mortality.
+* `end.horizon`: the time-step at which the main analytic time horizon ends and the accounting of "end horizon" effects begins.
 
-* `d_r`: The discount rate (`d_r`) is used to deprecate costs accrued in the simulation as a function of how much time has passed since the beginning of the analytic time horizon. The general rationale for discounting in CEA is that costs and benefits that are deferred have lower value than those that are realized immediately. The discount rate (`d_r`) is used to deprecate costs accrued in the simulation as a function of how much time has passed since the beginning of the analytic time horizon. The general rationale for discounting in CEA is that costs and benefits that are deferred have lower value than those that are realized immediately.
+* `d_r`: the annual rate at which costs and QALYs are discounted according to when they took place relative to `cea.start`. The general rationale for discounting in CEA is that costs and benefits that are deferred have lower value than those that are realized immediately. 
 
-* `inf.prob`: the probability that an infection will occur given an act between a susceptible and infected node in the absence of the intervention. 
-* `mortality.rates`: a vector of mortality rates, where the position on the vector correspond to the mortality rate of persons of `age+1` (for example, the first rate is for persons less than one year of age). 
-* `birth.rate`: a scalar for the rate of births per person per week.
+* `inter.eff`: 1 - the multiplicative reduction in probability that an infection will occur given an act in a sero-discordant partnership under the prophylaxis intervention. 
 
+* `inter.start`: the time-step at which the prophylaxis intervention begins.
 
-end.horizon <- 52 + 14
-  sus.cost <- 150
-  inf.cost <- 300
-  sus.qaly <- 1.00
-  inf.qaly <- 0.75
-  age.decrement <- -0.003
-  disc.rate <- 0.03
-  cea.start <- 14
-  nsteps <- 118
-  inter.eff <- 0.50
-  inter.start <- 14
-  inter.cost <- 500000
+* `inter.cost`: the total cost of the intervention, spread evenly between weekly time-steps from `inter.start` to `end.horizon`.
+
+* `sus.cost`: the weekly cost ($) of clinical care for a healthy (susceptible) individual.
+
+* `inf.cost`: the weekly cost ($) of clinical care for an infected individual.
+
+* `sus.qaly`: the QALYs accrued by a healthy (susceptible) individual over one year.
+
+* `inf.qaly`: the QALYs accrued by a infected individual over one year.
+
+* `age.decrement`: the additive reduction in QALYs accrued over one year for each year of the individual's age.
 
 ## Author
 Greg Knowlton, University of Minnesota
